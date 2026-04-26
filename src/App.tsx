@@ -17,6 +17,13 @@ const ROOM_H = 3200;      // interior virtual room height
 const NPC_SHIRTS = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#e67e22','#1abc9c','#e91e63','#ecf0f1','#34495e'];
 const NPC_SKINS  = ['#f0c080','#d4a060','#c07840','#e8b888','#c8956c','#fde8c8'];
 const NPC_HAIRS  = ['#180e06','#3d2b1f','#6b4c3b','#a07040','#1a1a2e','#2c1810'];
+const DAY_CYCLE  = 7200;  // ticks per full day cycle (~2min at 60fps)
+const NPC_PHRASES = [
+  '안녕하세요!','여기 좋죠?','서울 최고!','맛집 추천해요~','사진 찍어요!',
+  '날씨 좋다~','여기 처음이에요?','와 예쁘다!','같이 가요!','배고파~',
+  '커피 한잔?','오늘 뭐해?','여행 중이에요','힘내세요!','좋은 하루!',
+];
+const TREE_COLORS = ['#2d6b1e','#1a5c12','#3a7a28','#246b18','#347a22'];
 
 // ══════════════════════════════════════════════════════
 //  UTILITIES
@@ -54,6 +61,8 @@ interface PlayerState {
 interface Particle {
   x: number; y: number; vx: number; vy: number;
   life: number; maxLife: number; r: number; color: string;
+  kind?: 'dust'|'petal'|'rain'|'snow'|'leaf';
+  rot?: number; rotSpd?: number;
 }
 interface NPC {
   x: number; y: number; tx: number; ty: number;
@@ -530,6 +539,14 @@ export default function App() {
   const interior  = useRef<Interior | null>(null);
   const ePressed  = useRef(false);
   const [interiorHUD, setInteriorHUD] = useState<{name:string;emoji:string;floor:number;max:number}|null>(null);
+  const [doorPrompt, setDoorPrompt] = useState<string|null>(null);
+  const [visitedCount, setVisitedCount] = useState(0);
+  const [fadeAlpha, setFadeAlpha] = useState(0);
+
+  const smoothCam  = useRef({ x: 56000, y: 48000 });
+  const visited    = useRef<Set<string>>(new Set());
+  const ambientPts = useRef<Particle[]>([]);
+  const npcBubbles = useRef<Map<number, { text: string; life: number }>>(new Map());
 
   // ── Key listeners ──
   useEffect(() => {
@@ -671,6 +688,70 @@ export default function App() {
         .map(pt => ({ ...pt, x: pt.x+pt.vx, y: pt.y+pt.vy, vy: pt.vy*0.9, life: pt.life-1 }))
         .filter(pt => pt.life > 0);
 
+      // ── Ambient particles (cherry blossoms / leaves) ──
+      const dayT = (tick.current % DAY_CYCLE) / DAY_CYCLE; // 0..1
+      if (tick.current % 8 === 0) {
+        const camXt = p.x - 800;
+        const camYt = p.y - 600;
+        ambientPts.current.push({
+          x: camXt + Math.random() * 1600 * PIXEL_SCALE,
+          y: camYt - 100,
+          vx: -8 + Math.random() * 4,
+          vy: 6 + Math.random() * 8,
+          life: 180, maxLife: 180,
+          r: 12 + Math.random() * 8,
+          color: dayT > 0.75 ? '#ffd70088' : (Math.random() > 0.5 ? '#ffb7c5' : '#ffc0cb'),
+          kind: 'petal',
+          rot: Math.random() * 6.28,
+          rotSpd: (Math.random() - 0.5) * 0.08,
+        });
+      }
+      ambientPts.current = ambientPts.current
+        .map(pt => ({
+          ...pt,
+          x: pt.x + pt.vx + Math.sin(tick.current * 0.03 + pt.y * 0.001) * 3,
+          y: pt.y + pt.vy,
+          life: pt.life - 1,
+          rot: (pt.rot ?? 0) + (pt.rotSpd ?? 0),
+        }))
+        .filter(pt => pt.life > 0);
+
+      // ── Door prompt detection ──
+      let foundDoor: string | null = null;
+      for (const lm of LANDMARKS) {
+        const doorW = Math.min(900, lm.width * 0.4);
+        const dL2 = lm.x + lm.width/2 - doorW/2;
+        const dR2 = lm.x + lm.width/2 + doorW/2;
+        const doorY2 = lm.y + lm.height - WALL;
+        if (p.x >= dL2 && p.x <= dR2 && Math.abs(p.y - doorY2) < 400) {
+          foundDoor = `${lm.emoji} ${lm.name}`;
+          break;
+        }
+      }
+      setDoorPrompt(foundDoor);
+
+      // ── NPC speech bubbles ──
+      if (tick.current % 120 === 0) {
+        for (let ni = 0; ni < npcs.current.length; ni++) {
+          const npc = npcs.current[ni];
+          const dist = Math.hypot(p.x - npc.x, p.y - npc.y);
+          if (dist < 600 && Math.random() > 0.6) {
+            npcBubbles.current.set(ni, {
+              text: NPC_PHRASES[Math.floor(Math.random() * NPC_PHRASES.length)],
+              life: 180,
+            });
+          }
+        }
+      }
+      // Decay bubbles
+      for (const [k, b] of npcBubbles.current) {
+        b.life--;
+        if (b.life <= 0) npcBubbles.current.delete(k);
+      }
+
+      // ── Fade effect ──
+      if (fadeAlpha > 0) setFadeAlpha(a => Math.max(0, a - 0.04));
+
       // ── E key: enter/exit buildings ──
       if (ePressed.current) {
         ePressed.current = false;
@@ -694,6 +775,11 @@ export default function App() {
                 dir: 3, frame: 0, frameTimer: 0,
               };
               setInteriorHUD({ name: lm.name, emoji: lm.emoji, floor: 1, max: maxFloor });
+              setFadeAlpha(1);
+              if (!visited.current.has(lm.id)) {
+                visited.current.add(lm.id);
+                setVisitedCount(visited.current.size);
+              }
               break;
             }
           }
@@ -807,9 +893,13 @@ export default function App() {
       // ── offscreen: clear ──
       oCtx.imageSmoothingEnabled = false;
 
-      // Camera in world coords
-      const camX = pl.x - oW * PIXEL_SCALE / 2;
-      const camY = pl.y - oH * PIXEL_SCALE / 2;
+      // Smooth camera (lerp towards player)
+      const targetCX = pl.x - oW * PIXEL_SCALE / 2;
+      const targetCY = pl.y - oH * PIXEL_SCALE / 2;
+      smoothCam.current.x = lerp(smoothCam.current.x, targetCX, 0.1);
+      smoothCam.current.y = lerp(smoothCam.current.y, targetCY, 0.1);
+      const camX = smoothCam.current.x;
+      const camY = smoothCam.current.y;
 
       oCtx.save();
       oCtx.scale(1 / PIXEL_SCALE, 1 / PIXEL_SCALE);
@@ -973,11 +1063,163 @@ export default function App() {
       // ── PLAYER ──
       drawPlayer(oCtx, player.current, p);
 
+      // ── AMBIENT PARTICLES (cherry blossoms) ──
+      for (const pt of ambientPts.current) {
+        const alpha = pt.life / pt.maxLife;
+        oCtx.save();
+        oCtx.globalAlpha = alpha;
+        oCtx.fillStyle = pt.color;
+        oCtx.translate(pt.x, pt.y);
+        oCtx.rotate(pt.rot ?? 0);
+        // Petal shape
+        oCtx.beginPath();
+        oCtx.ellipse(0, 0, pt.r, pt.r * 0.5, 0, 0, Math.PI * 2);
+        oCtx.fill();
+        oCtx.restore();
+      }
+
+      // ── NPC SPEECH BUBBLES ──
+      for (const [ni, bubble] of npcBubbles.current) {
+        const npc = npcs.current[ni];
+        if (!npc) continue;
+        if (npc.x < camX - 500 || npc.x > camX + oW*PIXEL_SCALE + 500) continue;
+        if (npc.y < camY - 500 || npc.y > camY + oH*PIXEL_SCALE + 500) continue;
+        const alpha2 = Math.min(1, bubble.life / 30);
+        oCtx.save();
+        oCtx.globalAlpha = alpha2;
+        // Bubble bg
+        const bW = bubble.text.length * 52 + 60;
+        const bH = 90;
+        const bx = npc.x - bW / 2;
+        const by = npc.y - 140;
+        oCtx.fillStyle = 'rgba(0,0,0,0.75)';
+        oCtx.beginPath();
+        oCtx.roundRect(bx, by, bW, bH, 20);
+        oCtx.fill();
+        // Bubble tail
+        oCtx.beginPath();
+        oCtx.moveTo(npc.x - 15, by + bH);
+        oCtx.lineTo(npc.x, by + bH + 25);
+        oCtx.lineTo(npc.x + 15, by + bH);
+        oCtx.fill();
+        // Text
+        oCtx.fillStyle = '#ffffff';
+        oCtx.font = 'bold 50px sans-serif';
+        oCtx.textAlign = 'center';
+        oCtx.textBaseline = 'middle';
+        oCtx.fillText(bubble.text, npc.x, by + bH / 2);
+        oCtx.restore();
+      }
+
+      // ── STREET TREES along roads ──
+      for (const road of ROADS) {
+        const isH = road.w > road.h;
+        const step = 1200;
+        if (isH) {
+          for (let sx = road.x; sx < road.x + road.w; sx += step) {
+            if (sx < camX - 500 || sx > camX + oW*PIXEL_SCALE + 500) continue;
+            const seed = (sx * 7 + road.y * 13) & 0xffffff;
+            const tc = TREE_COLORS[seed % TREE_COLORS.length];
+            const tr = 60 + (seed % 40);
+            // Top side
+            oCtx.fillStyle = '#3a2a1a';
+            oCtx.fillRect(sx + step/2 - 8, road.y - 80, 16, 50);
+            oCtx.fillStyle = tc;
+            oCtx.beginPath();
+            oCtx.arc(sx + step/2, road.y - 100, tr, 0, Math.PI*2);
+            oCtx.fill();
+            oCtx.fillStyle = tc + '66';
+            oCtx.beginPath();
+            oCtx.arc(sx + step/2 - 15, road.y - 115, tr*0.5, 0, Math.PI*2);
+            oCtx.fill();
+            // Bottom side
+            oCtx.fillStyle = '#3a2a1a';
+            oCtx.fillRect(sx + step/2 - 8, road.y + road.h + 30, 16, 50);
+            oCtx.fillStyle = tc;
+            oCtx.beginPath();
+            oCtx.arc(sx + step/2, road.y + road.h + 100, tr, 0, Math.PI*2);
+            oCtx.fill();
+          }
+        } else {
+          for (let sy = road.y; sy < road.y + road.h; sy += step) {
+            if (sy < camY - 500 || sy > camY + oH*PIXEL_SCALE + 500) continue;
+            const seed = (road.x * 7 + sy * 13) & 0xffffff;
+            const tc = TREE_COLORS[seed % TREE_COLORS.length];
+            const tr = 60 + (seed % 40);
+            oCtx.fillStyle = '#3a2a1a';
+            oCtx.fillRect(road.x - 80, sy + step/2 - 8, 50, 16);
+            oCtx.fillStyle = tc;
+            oCtx.beginPath();
+            oCtx.arc(road.x - 100, sy + step/2, tr, 0, Math.PI*2);
+            oCtx.fill();
+            oCtx.fillStyle = '#3a2a1a';
+            oCtx.fillRect(road.x + road.w + 30, sy + step/2 - 8, 50, 16);
+            oCtx.fillStyle = tc;
+            oCtx.beginPath();
+            oCtx.arc(road.x + road.w + 100, sy + step/2, tr, 0, Math.PI*2);
+            oCtx.fill();
+          }
+        }
+      }
+
       oCtx.restore();
 
       // ── Blit offscreen → main canvas (nearest-neighbor = pixel art) ──
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(off, 0, 0, oW * PIXEL_SCALE, oH * PIXEL_SCALE);
+
+      // ── Day/Night cycle overlay ──
+      const dayT2 = (p % DAY_CYCLE) / DAY_CYCLE;
+      // 0=dawn, 0.25=noon, 0.5=dusk, 0.75=midnight
+      let nightAlpha = 0;
+      let tintR = 0, tintG = 0, tintB = 0;
+      if (dayT2 < 0.2) {
+        // Dawn - warm orange tint fading out
+        const t2 = dayT2 / 0.2;
+        tintR = 255; tintG = 140; tintB = 60;
+        nightAlpha = 0.15 * (1 - t2);
+      } else if (dayT2 < 0.4) {
+        // Day - clear
+        nightAlpha = 0;
+      } else if (dayT2 < 0.55) {
+        // Dusk - warm purple/orange
+        const t2 = (dayT2 - 0.4) / 0.15;
+        tintR = 200; tintG = 100; tintB = 80;
+        nightAlpha = 0.2 * t2;
+      } else if (dayT2 < 0.85) {
+        // Night - deep blue
+        const t2 = (dayT2 - 0.55) / 0.3;
+        tintR = 20; tintG = 20; tintB = 80;
+        nightAlpha = 0.2 + 0.25 * t2;
+      } else {
+        // Pre-dawn
+        const t2 = (dayT2 - 0.85) / 0.15;
+        tintR = lerp(20, 255, t2) | 0;
+        tintG = lerp(20, 140, t2) | 0;
+        tintB = lerp(80, 60, t2) | 0;
+        nightAlpha = lerp(0.45, 0.15, t2);
+      }
+      if (nightAlpha > 0.001) {
+        ctx.fillStyle = `rgba(${tintR},${tintG},${tintB},${nightAlpha})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      // Stars at night
+      if (dayT2 > 0.6 && dayT2 < 0.9) {
+        const starAlpha = Math.min(1, (dayT2 - 0.6) / 0.1) * Math.min(1, (0.9 - dayT2) / 0.1);
+        ctx.fillStyle = `rgba(255,255,255,${starAlpha * 0.8})`;
+        for (let si = 0; si < 60; si++) {
+          const sx2 = h2(si * 3, 777) * canvas.width;
+          const sy2 = h2(si * 5, 999) * canvas.height * 0.4;
+          const sr = 1 + h2(si, 42) * 1.5;
+          const twinkle = 0.5 + 0.5 * Math.sin(p * 0.05 + si * 2.1);
+          ctx.globalAlpha = starAlpha * twinkle;
+          ctx.beginPath();
+          ctx.arc(sx2, sy2, sr, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
 
       // ── Vignette overlay on main canvas ──
       const vig = ctx.createRadialGradient(
@@ -988,6 +1230,12 @@ export default function App() {
       vig.addColorStop(1, 'rgba(0,0,0,0.45)');
       ctx.fillStyle = vig;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // ── Fade overlay (building transition) ──
+      if (fadeAlpha > 0.01) {
+        ctx.fillStyle = `rgba(0,0,0,${fadeAlpha})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
     };
 
     // ════════════════════════════════════════════════
@@ -1623,6 +1871,14 @@ export default function App() {
         <canvas ref={minimapRef} className="minimap-canvas" />
       </div>
 
+      {/* ── DOOR PROMPT ── */}
+      {doorPrompt && !interiorHUD && (
+        <div className="door-prompt">
+          <kbd className="door-key">E</kbd>
+          <span>{doorPrompt} 입장</span>
+        </div>
+      )}
+
       {/* ── INTERIOR HUD ── */}
       {interiorHUD && (
         <div className="hud-interior">
@@ -1632,6 +1888,15 @@ export default function App() {
             <div className="int-floor">{interiorHUD.floor}F / {interiorHUD.max}F</div>
           </div>
           <div className="int-hint">E: 나가기 | ▲엘리베이터: W | ▼: S</div>
+        </div>
+      )}
+
+      {/* ── VISITED STAMP ── */}
+      {visitedCount > 0 && (
+        <div className="hud-visited">
+          <span className="stamp-icon">🏛️</span>
+          <span className="stamp-count">{visitedCount}</span>
+          <span className="stamp-label">/ {LANDMARKS.length}</span>
         </div>
       )}
 

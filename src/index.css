@@ -308,23 +308,96 @@ kbd {
 /* ── Interior HUD ── */
 .hud-interior {
   position: fixed;
-  top: 50%;
+  top: 80px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 12px;
-  background: rgba(0,0,0,0.75);
-  border: 1px solid rgba(255,255,255,0.25);
-  border-radius: 6px;
-  padding: 8px 18px;
+  background: var(--c-ui);
+  border: 2px solid var(--c-gold);
+  border-radius: 4px;
+  padding: 10px 20px;
   color: #fff;
-  font-family: 'Press Start 2P', monospace;
+  font-family: var(--font-px);
   font-size: 10px;
   pointer-events: none;
   z-index: 50;
+  box-shadow: 0 0 24px rgba(240,200,64,0.3);
+  background-image:
+    repeating-linear-gradient(0deg, transparent, transparent 3px,
+      rgba(0,0,0,0.05) 3px, rgba(0,0,0,0.05) 4px);
 }
-.int-icon { font-size: 18px; }
-.int-name { color: #ffd700; }
-.int-floor { color: #7dd3fc; font-size: 9px; }
-.int-hint  { color: #aaa; font-size: 8px; }
+.int-icon { font-size: 22px; filter: drop-shadow(0 0 8px rgba(255,255,200,0.5)); }
+.int-name { color: var(--c-gold); text-shadow: 0 0 8px rgba(240,200,64,0.6); }
+.int-floor { color: #7dd3fc; font-size: 9px; text-shadow: 0 0 6px rgba(125,211,252,0.5); }
+.int-hint  { color: rgba(180,210,255,0.7); font-size: 7px; }
+
+/* ── Door Prompt ── */
+.door-prompt {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--c-ui);
+  border: 2px solid var(--c-gold);
+  border-radius: 4px;
+  padding: 10px 20px;
+  font-family: var(--font-px);
+  font-size: 9px;
+  color: var(--c-gold);
+  pointer-events: none;
+  z-index: 40;
+  animation: door-pulse 1.2s ease-in-out infinite;
+  box-shadow: 0 0 20px rgba(240,200,64,0.25);
+  background-image:
+    repeating-linear-gradient(0deg, transparent, transparent 3px,
+      rgba(0,0,0,0.05) 3px, rgba(0,0,0,0.05) 4px);
+}
+.door-key {
+  font-size: 10px !important;
+  padding: 4px 10px !important;
+  animation: key-bounce 1s ease-in-out infinite;
+}
+@keyframes door-pulse {
+  0%, 100% { opacity: 0.85; transform: translateX(-50%) translateY(0); }
+  50% { opacity: 1; transform: translateX(-50%) translateY(-3px); }
+}
+@keyframes key-bounce {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+
+/* ── Visited Stamp Counter ── */
+.hud-visited {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--c-ui);
+  border: 2px solid var(--c-border);
+  border-radius: 4px;
+  padding: 8px 14px;
+  font-family: var(--font-px);
+  font-size: 8px;
+  color: var(--c-text);
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.8),
+    inset 0 1px 0 rgba(255,255,255,0.08),
+    0 4px 16px rgba(0,0,0,0.5);
+  background-image:
+    repeating-linear-gradient(0deg, transparent, transparent 3px,
+      rgba(0,0,0,0.05) 3px, rgba(0,0,0,0.05) 4px);
+}
+.stamp-icon { font-size: 14px; }
+.stamp-count {
+  color: var(--c-gold);
+  font-size: 11px;
+  text-shadow: 0 0 8px rgba(240,200,64,0.6);
+}
+.stamp-label { color: rgba(180,210,255,0.5); font-size: 7px; }
